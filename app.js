@@ -112,23 +112,27 @@ function playChannel(channel) {
     
     filterAndRender();
 
+    // FORZAR HTTPS: Convierte URLs inseguras para evitar bloqueos del navegador
+    let secureUrl = channel.url;
+    if (secureUrl.startsWith("http://")) {
+        secureUrl = secureUrl.replace("http://", "https://");
+    }
+
     if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         if (hls) hls.destroy();
 
-        // CONFIGURACIÓN ULTRA-RÁPIDA PARA STREAMS HTTPS DIRECTOS
         hls = new Hls({
             enableWorker: true,
             lowLatencyMode: true,
-            backBufferLength: 0,            // No guarda búfer previo para no consumir memoria
-            maxBufferLength: 3,             // Búfer mínimo (3s) para arranque instantáneo
-            maxMaxBufferLength: 5,
-            liveSyncDurationCount: 1,       // Va directo al último segmento en vivo
-            liveMaxLatencyDurationCount: 3,
-            manifestLoadingTimeOut: 3000,   // Si no responde en 3s pasa al siguiente
+            backBufferLength: 0,
+            maxBufferLength: 3,
+            maxMaxBufferLength: 6,
+            liveSyncDurationCount: 1,
+            manifestLoadingTimeOut: 3000,
             fragLoadingTimeOut: 3000
         });
 
-        hls.loadSource(channel.url);
+        hls.loadSource(secureUrl);
         hls.attachMedia(videoPlayer);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -141,22 +145,12 @@ function playChannel(channel) {
 
         hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
-                switch (data.type) {
-                    case Hls.ErrorTypes.NETWORK_ERROR:
-                        // Intenta recuperar conexión de red inmediatamente sin colgar la app
-                        hls.startLoad();
-                        break;
-                    case Hls.ErrorTypes.MEDIA_ERROR:
-                        hls.recoverMediaError();
-                        break;
-                    default:
-                        handleStreamError(channel);
-                        break;
-                }
+                console.error("Error en el stream:", data);
+                handleStreamError(channel);
             }
         });
     } else if (videoPlayer && videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-        videoPlayer.src = channel.url;
+        videoPlayer.src = secureUrl;
         videoPlayer.play().catch(() => {});
         if (liveBadge) liveBadge.classList.remove('hidden');
         if (currentStatus) currentStatus.textContent = 'En vivo';
