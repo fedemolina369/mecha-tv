@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MechaTV</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js"></script>
 <style>
 :root{
   --bg:#0b0d12; --panel:#131722; --panel2:#1b2030; --line:#262c3f;
@@ -34,6 +35,7 @@ video{width:100%;height:100%;display:block;background:#000}
 .overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
   background:rgba(0,0,0,.55);text-align:center;padding:20px;pointer-events:none;transition:.2s}
 .overlay.hidden{opacity:0;visibility:hidden}
+#overlayMsg{white-space:pre-line;max-width:560px;line-height:1.5;font-size:.9rem}
 .spinner{width:42px;height:42px;border-radius:50%;border:4px solid rgba(255,255,255,.15);border-top-color:var(--accent2);animation:sp 1s linear infinite}
 .overlay.error .spinner{display:none}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -121,9 +123,10 @@ video{width:100%;height:100%;display:block;background:#000}
     <label>Supabase URL</label><input id="cfgUrl">
     <label>Supabase publishable / anon key</label><input id="cfgKey">
     <label>Tabla</label><input id="cfgTable">
-    <label>Proxy CORS (opcional)</label>
-    <input id="cfgProxy" placeholder="https://mi-proxy.workers.dev/?url={url}">
-    <div class="hint">Se usa solo como último recurso cuando un canal falla directo. Usa <code>{url}</code> donde va la URL del stream (codificada).</div>
+    <label>URL de tu proxy (Cloudflare Worker)</label>
+    <input id="cfgProxy" placeholder="https://mechatv-proxy.TU-USUARIO.workers.dev">
+    <div class="hint">Pega solo la dirección de tu Worker (ver worker.js). Arregla CORS y enlaces http en páginas https.</div>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:14px"><input type="checkbox" id="cfgProxyAll" style="width:auto"> Usar siempre el proxy (más compatible, consume más cuota)</label>
     <div class="row">
       <button class="btn" id="cfgCancel">Cancelar</button>
       <button class="btn primary" id="cfgSave">Guardar y recargar</button>
@@ -150,7 +153,8 @@ const DEFAULTS = {
   url:   "https://mbdsegfnlkhnvymannpy.supabase.co",
   key:   "sb_publishable_3R0SBt0i9zPYrbZMl18tQA_V9Wf20IR",
   table: "tv_channels",
-  proxy: ""
+  proxy: "",
+  proxyAll: "0"
 };
 const cfg = {
   get(k){ return localStorage.getItem('mechatv_'+k) ?? DEFAULTS[k]; },
@@ -315,18 +319,65 @@ function toggleFav(k){
 }
 
 /* ============ Reproducción ============ */
-function buildCandidates(url){
-  const list = [];
-  const pageHttps = location.protocol === 'https:';
+const modes = JSON.parse(localStorage.getItem('mechatv_modes') || '{}');
+let tsPlayer = null;
+
+function proxyUrl(url){
+  let p = (cfg.get('proxy') || '').trim();
+  if(!p) return null;
+  if(!p.includes('{url}')) p = p.replace(/\/+$/,'') + '/?url={url}';
+  return p.replace('{url}', encodeURIComponent(url));
+}
+function guessKinds(url){
+  const clean = url.split('?')[0].toLowerCase();
+  if(/\.(mp4|webm|ogv)$/.test(clean)) return ['file'];
+  if(/\.(flv)$/.test(clean)) return ['ts'];
+  if(/\.m3u8$/.test(clean)) return ['hls','ts'];
+  return ['hls','ts'];            // sin extensión o .ts: probamos HLS y luego MPEG-TS
+}
+function buildCandidates(ch){
+  const url = ch.url, k = keyOf(ch);
   const isHttp = url.startsWith('http://');
-  if(!(pageHttps && isHttp)) list.push(url);               // directo (si no hay contenido mixto)
-  if(isHttp) list.push('https://' + url.slice(7));          // intento con https
-  const p = cfg.get('proxy');
-  if(p && p.includes('{url}')) list.push(p.replace('{url}', encodeURIComponent(url)));
-  return [...new Set(list)];
+  const direct = [];
+  if(!(location.protocol === 'https:' && isHttp)) direct.push({src:url, via:'direct'});
+  if(isHttp) direct.push({src:'https://' + url.slice(7), via:'direct'});
+  const px = proxyUrl(url);
+  const proxied = px ? [{src:px, via:'proxy'}] : [];
+  const preferProxy = cfg.get('proxyAll') === '1' || modes[k] === 'proxy';
+  const order = preferProxy ? [...proxied, ...direct] : [...direct, ...proxied];
+  const out = [], seen = new Set();
+  for(const c of order) for(const kind of guessKinds(url)){
+    const id = c.src + '|' + kind;
+    if(!seen.has(id)){ seen.add(id); out.push({...c, kind}); }
+  }
+  return out;
+}
+function reasonText(r){
+  if(r === 'parse')   return 'la URL no devuelve una lista HLS válida (¿es otro formato o una página web?)';
+  if(r === 'timeout') return 'tiempo de espera agotado (el servidor no responde)';
+  if(r === 'net')     return 'sin respuesta: bloqueado por CORS, servidor caído o IP bloqueada';
+  if(r === 'nots')    return 'el reproductor MPEG-TS no está disponible';
+  if(r === 'media')   return 'el video no se pudo decodificar (códec no compatible)';
+  if(/^http\d+$/.test(r)){
+    const c = +r.slice(4);
+    if(c === 401 || c === 403) return `el servidor rechaza la petición (HTTP ${c})`;
+    if(c === 404 || c === 410) return `stream caído o enlace vencido (HTTP ${c})`;
+    return `error del servidor (HTTP ${c})`;
+  }
+  return r;
+}
+function classifyHls(d){
+  const code = d.response && d.response.code;
+  if(d.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR) return 'parse';
+  if(code >= 400) return 'http' + code;
+  if(/timeout/i.test(d.details)) return 'timeout';
+  if(d.type === Hls.ErrorTypes.NETWORK_ERROR) return 'net';
+  return 'media';
 }
 function stopPlayer(){
-  if(hls){ hls.destroy(); hls = null; }
+  if(hls){ try{ hls.destroy(); }catch{} hls = null; }
+  if(tsPlayer){ try{ tsPlayer.destroy(); }catch{} tsPlayer = null; }
+  video.onplaying = null; video.onerror = null;
   video.removeAttribute('src'); video.load();
 }
 function selectChannel(ch, autoplay){
@@ -342,66 +393,103 @@ function selectChannel(ch, autoplay){
 }
 function play(ch){
   const token = ++playToken;
-  const cands = buildCandidates(ch.url);
   $('live').classList.add('hidden');
   stopPlayer();
-  document.querySelector('#overlay .spinner').style.display='';
+  document.querySelector('#overlay .spinner').style.display = '';
+  const cands = buildCandidates(ch);
   if(!cands.length){
-    return fail(ch, 'La página está en HTTPS y el stream es HTTP (bloqueado por el navegador). Configura un proxy en Ajustes o sirve esta web por HTTP.');
+    return fail(ch, ['Este canal es http:// y la página está en https://: el navegador lo bloquea. Configura tu proxy en ⚙️ Ajustes.']);
   }
-  tryCandidate(ch, cands, 0, token);
+  tryCandidate(ch, cands, 0, token, []);
 }
-function tryCandidate(ch, cands, i, token){
+function tryCandidate(ch, cands, i, token, errors){
   if(token !== playToken) return;
-  if(i >= cands.length) return fail(ch, 'No se pudo reproducir. Puede ser CORS, stream caído o formato no compatible.');
-  setOverlay(`Conectando${cands.length>1 ? ` (${i+1}/${cands.length})` : ''}…`, 'load');
-  const url = cands[i];
-  const next = () => tryCandidate(ch, cands, i+1, token);
+  if(i >= cands.length) return fail(ch, errors);
+  const c = cands[i];
+  setOverlay(`Conectando (${i+1}/${cands.length})…`, 'load');
+  let settled = false, recovered = 0;
+  const timer = setTimeout(() => bad('timeout'), 15000);
+
   const ok = () => {
-    if(token !== playToken) return;
+    if(settled || token !== playToken) return;
+    settled = true; clearTimeout(timer);
+    if(c.via === 'proxy' && modes[keyOf(ch)] !== 'proxy'){
+      modes[keyOf(ch)] = 'proxy'; localStorage.setItem('mechatv_modes', JSON.stringify(modes));
+    }
     offline.delete(keyOf(ch));
     setOverlay('', 'hide');
     $('live').classList.remove('hidden');
     render();
   };
+  const bad = (reason) => {
+    if(settled || token !== playToken) return;
+    settled = true; clearTimeout(timer);
+    stopPlayer();
+    errors.push(`${c.via === 'proxy' ? 'Vía proxy' : 'Directo'} (${c.kind.toUpperCase()}): ${reasonText(reason)}`);
+    let j = i + 1;
+    // si HLS falló por red/HTTP (no por formato), probar MPEG-TS con la misma URL no ayuda
+    if(c.kind === 'hls' && reason !== 'parse'){
+      while(j < cands.length && cands[j].src === c.src && cands[j].kind === 'ts') j++;
+    }
+    tryCandidate(ch, cands, j, token, errors);
+  };
 
-  // Archivos directos (mp4/webm)
-  if(/\.(mp4|webm|ogv)(\?|$)/i.test(url)){
-    video.src = url;
-    video.onplaying = ok;
-    video.onerror = next;
-    video.play().catch(()=>{});
+  if(c.kind === 'file'){
+    video.onplaying = ok; video.onerror = () => bad('media');
+    video.src = c.src; video.play().catch(()=>{});
     return;
   }
 
-  if(window.Hls && Hls.isSupported()){
-    hls = new Hls({ enableWorker:true, lowLatencyMode:true, manifestLoadingTimeOut:12000, manifestLoadingMaxRetry:1, levelLoadingMaxRetry:2, fragLoadingMaxRetry:3 });
-    let recovered = 0, started = false;
-    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
-    hls.on(Hls.Events.FRAG_BUFFERED, () => { if(!started){ started = true; ok(); } });
-    hls.on(Hls.Events.ERROR, (_, d) => {
-      if(token !== playToken) return;
-      if(!d.fatal) return;
-      console.warn('HLS fatal', d.type, d.details, url);
-      if(started && d.type === Hls.ErrorTypes.NETWORK_ERROR && recovered < 3){ recovered++; hls.startLoad(); return; }
-      if(started && d.type === Hls.ErrorTypes.MEDIA_ERROR && recovered < 3){ recovered++; hls.recoverMediaError(); return; }
-      if(hls){ hls.destroy(); hls = null; }
-      next();
-    });
-    hls.loadSource(url);
-    hls.attachMedia(video);
-  } else if(video.canPlayType('application/vnd.apple.mpegurl')){ // Safari / iOS
-    video.src = url;
+  if(c.kind === 'ts'){
+    if(!window.mpegts || !mpegts.isSupported()) return bad('nots');
+    const isFlv = /\.flv(\?|$)/i.test(c.src);
+    tsPlayer = mpegts.createPlayer({ type: isFlv ? 'flv' : 'mpegts', isLive: true, url: c.src },
+                                   { enableWorker: true, liveBufferLatencyChasing: true });
+    tsPlayer.attachMediaElement(video);
     video.onplaying = ok;
-    video.onerror = next;
-    video.play().catch(()=>{});
+    tsPlayer.on(mpegts.Events.ERROR, (type, detail, info) => {
+      if(settled){ stopPlayer(); return fail(ch, ['La señal se cortó']); }
+      const code = info && info.code;
+      bad(code >= 400 ? 'http' + code : (type === 'NetworkError' ? 'net' : 'media'));
+    });
+    tsPlayer.load();
+    const pr = tsPlayer.play(); if(pr && pr.catch) pr.catch(()=>{});
+    return;
+  }
+
+  // HLS
+  if(window.Hls && Hls.isSupported()){
+    hls = new Hls({ enableWorker:true, lowLatencyMode:true, manifestLoadingTimeOut:10000,
+                    manifestLoadingMaxRetry:1, levelLoadingMaxRetry:2, fragLoadingMaxRetry:3 });
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
+    hls.on(Hls.Events.FRAG_BUFFERED, ok);
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if(token !== playToken || !d.fatal) return;
+      console.warn('HLS fatal', d.type, d.details, c.src);
+      if(settled){   // ya estaba reproduciendo y se cortó
+        if(d.type === Hls.ErrorTypes.MEDIA_ERROR && recovered++ < 3) hls.recoverMediaError();
+        else if(d.type === Hls.ErrorTypes.NETWORK_ERROR && recovered++ < 3) hls.startLoad();
+        else { stopPlayer(); fail(ch, ['La señal se cortó']); }
+        return;
+      }
+      bad(classifyHls(d));
+    });
+    hls.loadSource(c.src);
+    hls.attachMedia(video);
+  } else if(video.canPlayType('application/vnd.apple.mpegurl')){   // Safari / iOS
+    video.onplaying = ok; video.onerror = () => bad('net');
+    video.src = c.src; video.play().catch(()=>{});
   } else {
-    fail(ch, 'Tu navegador no soporta HLS.');
+    bad('media');
   }
 }
-function fail(ch, msg){
+function fail(ch, errors){
   offline.add(keyOf(ch));
-  setOverlay(`${ch.name}: ${msg}`, 'error');
+  const uniq = [...new Set(errors)];
+  let msg = `${ch.name}: no se pudo reproducir.\n` + uniq.map(e => '• ' + e).join('\n');
+  if(!cfg.get('proxy') && uniq.some(e => /CORS|sin respuesta/.test(e)))
+    msg += '\n\nSolución: despliega worker.js en Cloudflare y pega su URL en ⚙️ Ajustes.';
+  setOverlay(msg, 'error');
   $('live').classList.add('hidden');
   render();
 }
@@ -409,7 +497,7 @@ function fail(ch, msg){
 /* ============ Eventos ============ */
 $('search').addEventListener('input', render);
 $('btnExport').onclick = exportM3U;
-$('btnRetry').onclick = () => current && play(current);
+$('btnRetry').onclick = () => { if(current){ delete modes[keyOf(current)]; play(current); } };
 $('btnFs').onclick = () => {
   const el = $('playerBox');
   document.fullscreenElement ? document.exitFullscreen() : (el.requestFullscreen?.() || video.webkitEnterFullscreen?.());
@@ -421,13 +509,13 @@ $('btnPip').onclick = async () => {
 // Ajustes
 $('btnConfig').onclick = () => {
   $('cfgUrl').value = cfg.get('url'); $('cfgKey').value = cfg.get('key');
-  $('cfgTable').value = cfg.get('table'); $('cfgProxy').value = cfg.get('proxy');
+  $('cfgTable').value = cfg.get('table'); $('cfgProxy').value = cfg.get('proxy'); $('cfgProxyAll').checked = cfg.get('proxyAll') === '1';
   $('modalConfig').classList.remove('hidden');
 };
 $('cfgCancel').onclick = () => $('modalConfig').classList.add('hidden');
 $('cfgSave').onclick = () => {
   cfg.set('url', $('cfgUrl').value.trim()); cfg.set('key', $('cfgKey').value.trim());
-  cfg.set('table', $('cfgTable').value.trim() || 'tv_channels'); cfg.set('proxy', $('cfgProxy').value.trim());
+  cfg.set('table', $('cfgTable').value.trim() || 'tv_channels'); cfg.set('proxy', $('cfgProxy').value.trim()); cfg.set('proxyAll', $('cfgProxyAll').checked ? '1' : '0');
   location.reload();
 };
 // Importar M3U
