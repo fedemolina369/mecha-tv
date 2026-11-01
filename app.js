@@ -108,36 +108,52 @@ function playChannel(channel) {
     currentChannel = channel;
     if (currentTitle) currentTitle.textContent = channel.name;
     if (currentCategory) currentCategory.textContent = channel.category;
-    if (currentStatus) currentStatus.textContent = 'Conectando al señal...';
+    if (currentStatus) currentStatus.textContent = 'Conectando señal...';
     
     filterAndRender();
 
     if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         if (hls) hls.destroy();
 
-        // AJUSTES DE OPTIMIZACIÓN Y BAJA LATENCIA
+        // CONFIGURACIÓN ULTRA-RÁPIDA PARA STREAMS HTTPS DIRECTOS
         hls = new Hls({
-            maxBufferLength: 6,
-            maxMaxBufferLength: 12,
             enableWorker: true,
             lowLatencyMode: true,
-            manifestLoadingTimeOut: 4000,
-            manifestLoadingMaxRetry: 1,
-            fragLoadingTimeOut: 4000,
-            fragLoadingMaxRetry: 1
+            backBufferLength: 0,            // No guarda búfer previo para no consumir memoria
+            maxBufferLength: 3,             // Búfer mínimo (3s) para arranque instantáneo
+            maxMaxBufferLength: 5,
+            liveSyncDurationCount: 1,       // Va directo al último segmento en vivo
+            liveMaxLatencyDurationCount: 3,
+            manifestLoadingTimeOut: 3000,   // Si no responde en 3s pasa al siguiente
+            fragLoadingTimeOut: 3000
         });
 
         hls.loadSource(channel.url);
         hls.attachMedia(videoPlayer);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (videoPlayer) videoPlayer.play().catch(() => {});
+            if (videoPlayer) {
+                videoPlayer.play().catch(() => {});
+            }
             if (liveBadge) liveBadge.classList.remove('hidden');
             if (currentStatus) currentStatus.textContent = 'En vivo';
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) handleStreamError(channel);
+            if (data.fatal) {
+                switch (data.type) {
+                    case Hls.ErrorTypes.NETWORK_ERROR:
+                        // Intenta recuperar conexión de red inmediatamente sin colgar la app
+                        hls.startLoad();
+                        break;
+                    case Hls.ErrorTypes.MEDIA_ERROR:
+                        hls.recoverMediaError();
+                        break;
+                    default:
+                        handleStreamError(channel);
+                        break;
+                }
+            }
         });
     } else if (videoPlayer && videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
         videoPlayer.src = channel.url;
