@@ -112,10 +112,15 @@ function playChannel(channel) {
     
     filterAndRender();
 
-    // FORZAR HTTPS: Convierte URLs inseguras para evitar bloqueos del navegador
-    let secureUrl = channel.url;
-    if (secureUrl.startsWith("http://")) {
-        secureUrl = secureUrl.replace("http://", "https://");
+    let targetUrl = channel.url;
+    
+    // Si el canal falló antes, usamos un proxy CORS público para asegurar que cargue
+    if (channel.fail_count > 0) {
+        targetUrl = `https://corsproxy.io/?` + encodeURIComponent(channel.url);
+    } else {
+        if (targetUrl.startsWith("http://")) {
+            targetUrl = targetUrl.replace("http://", "https://");
+        }
     }
 
     if (typeof Hls !== 'undefined' && Hls.isSupported()) {
@@ -128,11 +133,11 @@ function playChannel(channel) {
             maxBufferLength: 3,
             maxMaxBufferLength: 6,
             liveSyncDurationCount: 1,
-            manifestLoadingTimeOut: 3000,
-            fragLoadingTimeOut: 3000
+            manifestLoadingTimeOut: 4000,
+            fragLoadingTimeOut: 4000
         });
 
-        hls.loadSource(secureUrl);
+        hls.loadSource(targetUrl);
         hls.attachMedia(videoPlayer);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -143,15 +148,14 @@ function playChannel(channel) {
             if (currentStatus) currentStatus.textContent = 'En vivo';
         });
 
-        // MANEJO DETALLADO DE ERRORES HLS
         hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
-                console.warn(`⚠️ Canal "${channel.name}" falló. Tipo: ${data.type}, Detalle: ${data.details}`);
+                console.warn(`⚠️ Canal "${channel.name}" falló con URL directa. Intentando con Proxy CORS...`);
                 handleStreamError(channel);
             }
         });
     } else if (videoPlayer && videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-        videoPlayer.src = secureUrl;
+        videoPlayer.src = targetUrl;
         videoPlayer.play().catch(() => {});
         if (liveBadge) liveBadge.classList.remove('hidden');
         if (currentStatus) currentStatus.textContent = 'En vivo';
@@ -160,12 +164,15 @@ function playChannel(channel) {
 
 function handleStreamError(channel) {
     channel.fail_count = (channel.fail_count || 0) + 1;
-    if (currentStatus) currentStatus.textContent = `⚠️ Señal inestable (${channel.fail_count}/2)`;
 
-    if (channel.fail_count >= 2) {
+    if (channel.fail_count === 1) {
+        // Primer fallo: Reintentar automáticamente con Proxy CORS
+        playChannel(channel);
+    } else {
+        // Segundo fallo definitivo: Remover de la vista para mantener limpia la app
         channels = channels.filter(c => c.id !== channel.id);
         filterAndRender();
-        if (currentStatus) currentStatus.textContent = `🗑️ Canal "${channel.name}" desestimado por falta de señal.`;
+        if (currentStatus) currentStatus.textContent = `🗑️ Canal "${channel.name}" removido por señal inaccesible.`;
         if (liveBadge) liveBadge.classList.add('hidden');
     }
 }
