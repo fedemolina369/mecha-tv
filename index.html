@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MECHA TV - Live IPTV</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="logo-container">
+            <div class="brand-badge">LIVE</div>
+            <h1 class="logo">MECHA<span>TV</span></h1>
+        </div>
+        <div class="header-actions">
+            <input type="text" id="searchInput" placeholder="Buscar canal..." class="search-input">
+            <button id="configBtn" class="btn-secondary">⚙️ Supabase</button>
+        </div>
+    </header>
+
+    <div class="category-bar" id="categoryContainer">
+        <button class="cat-chip active" data-category="ALL">Todos</button>
+        <button class="cat-chip" data-category="Deportes">Deportes</button>
+        <button class="cat-chip" data-category="Cine & Series">Cine & Series</button>
+        <button class="cat-chip" data-category="Noticias">Noticias</button>
+        <button class="cat-chip" data-category="Variedades">Variedades</button>
+    </div>
+
+    <main class="main-layout">
+        <section class="player-section">
+            <div class="video-wrapper">
+                <video id="videoPlayer" controls autoplay poster="https://images.unsplash.com/photo-1593784991095-a205069470b6?auto=format&fit=crop&w=1200&q=80"></video>
+                <div id="liveBadge" class="live-indicator hidden">
+                    <span class="dot"></span> EN VIVO
+                </div>
+            </div>
+            <div class="player-info">
+                <div class="info-meta">
+                    <h2 id="currentChannelTitle">Selecciona un canal</h2>
+                    <span id="currentChannelCategory" class="badge">---</span>
+                </div>
+                <p id="currentChannelStatus" class="status-text">Listo para reproducir</p>
+            </div>
+        </section>
+
+        <aside class="grid-section">
+            <div class="grid-header">
+                <h3>PARRILLA DE CANALES</h3>
+                <span id="channelCount" class="count-badge">0 canales</span>
+            </div>
+            <div class="channels-grid" id="channelsGrid"></div>
+        </aside>
+    </main>
+
+    <div id="configModal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Conectar Supabase</h3>
+            <p>Ingresa tus credenciales para sincronizar tu tabla <code>tv_channels</code>.</p>
+            <div class="input-group">
+                <label>Supabase URL</label>
+                <input type="text" id="supabaseUrlInput" placeholder="https://xyz.supabase.co">
+            </div>
+            <div class="input-group">
+                <label>Supabase Anon Key</label>
+                <input type="text" id="supabaseKeyInput" placeholder="eyJhbGciOiJKV1Qi...">
+            </div>
+            <div class="modal-actions">
+                <button id="saveConfigBtn" class="btn-primary">Guardar y Conectar</button>
+                <button id="closeConfigBtn" class="btn-secondary">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
