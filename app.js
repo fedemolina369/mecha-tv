@@ -143,9 +143,10 @@ function playChannel(channel) {
             if (currentStatus) currentStatus.textContent = 'En vivo';
         });
 
+        // MANEJO DETALLADO DE ERRORES HLS
         hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
-                console.error("Error en el stream:", data);
+                console.warn(`⚠️ Canal "${channel.name}" falló. Tipo: ${data.type}, Detalle: ${data.details}`);
                 handleStreamError(channel);
             }
         });
