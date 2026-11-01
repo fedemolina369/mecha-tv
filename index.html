@@ -1,78 +1,465 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MECHA TV - Live IPTV</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MechaTV</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js"></script>
+<style>
+:root{
+  --bg:#0b0d12; --panel:#131722; --panel2:#1b2030; --line:#262c3f;
+  --text:#e8ebf4; --muted:#8089a5; --accent:#7c5cff; --accent2:#00d4ff;
+  --ok:#2ecc71; --bad:#ff4d6d; --radius:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:radial-gradient(1200px 600px at 10% -10%,#1a1440 0,transparent 60%),var(--bg);
+  color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+header{display:flex;gap:12px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);
+  background:rgba(11,13,18,.8);backdrop-filter:blur(10px);position:sticky;top:0;z-index:20}
+.brand{font-weight:800;font-size:1.25rem;letter-spacing:.5px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.search{flex:1;max-width:460px;position:relative}
+.search input{width:100%;padding:10px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--text);outline:none}
+.search input:focus{border-color:var(--accent)}
+.actions{display:flex;gap:8px;margin-left:auto}
+.btn{padding:9px 14px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);font-size:.88rem;transition:.15s}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:linear-gradient(90deg,var(--accent),#5a7dff);border-color:transparent}
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:18px;padding:18px}
+.player-col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.player{position:relative;background:#000;border-radius:var(--radius);overflow:hidden;aspect-ratio:16/9;border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+video{width:100%;height:100%;display:block;background:#000}
+.overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  background:rgba(0,0,0,.55);text-align:center;padding:20px;pointer-events:none;transition:.2s}
+.overlay.hidden{opacity:0;visibility:hidden}
+.spinner{width:42px;height:42px;border-radius:50%;border:4px solid rgba(255,255,255,.15);border-top-color:var(--accent2);animation:sp 1s linear infinite}
+.overlay.error .spinner{display:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+.live{position:absolute;top:12px;left:12px;background:var(--bad);color:#fff;font-size:.72rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:1px}
+.live.hidden{display:none}
+.info{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+.info img{width:56px;height:56px;object-fit:contain;background:#fff1;border-radius:12px;padding:6px}
+.info h2{font-size:1.1rem}
+.info p{color:var(--muted);font-size:.85rem;margin-top:3px}
+.info .tools{margin-left:auto;display:flex;gap:8px}
+.side{display:flex;flex-direction:column;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.chips{display:flex;gap:8px;padding:12px;overflow-x:auto;border-bottom:1px solid var(--line);scrollbar-width:thin}
+.chip{white-space:nowrap;padding:6px 13px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:.8rem;color:var(--muted)}
+.chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.count{padding:8px 14px;font-size:.78rem;color:var(--muted)}
+.grid{flex:1;overflow-y:auto;padding:0 12px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;align-content:start}
+.card{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 8px 10px;
+  display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;transition:.15s}
+.card:hover{transform:translateY(-2px);border-color:var(--accent)}
+.card.active{border-color:var(--accent2);box-shadow:0 0 0 2px #00d4ff33}
+.card.offline{opacity:.45}
+.card img{width:56px;height:56px;object-fit:contain}
+.card span.n{font-size:.76rem;line-height:1.2;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.fav{position:absolute;top:4px;right:6px;font-size:1rem;color:#55607f;padding:2px}
+.fav.on{color:#ffd24a}
+.empty{grid-column:1/-1;text-align:center;color:var(--muted);padding:30px 10px;font-size:.9rem;line-height:1.5}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.modal.hidden{display:none}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px;width:100%;max-width:520px;max-height:90vh;overflow:auto}
+.box h3{margin-bottom:14px}
+.box label{display:block;font-size:.8rem;color:var(--muted);margin:12px 0 5px}
+.box input,.box textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);outline:none;font:inherit;font-size:.88rem}
+.box textarea{min-height:120px;resize:vertical;font-family:ui-monospace,monospace;font-size:.78rem}
+.box .row{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.hint{font-size:.76rem;color:var(--muted);margin-top:5px;line-height:1.4}
+@media(max-width:980px){
+  main{grid-template-columns:1fr}
+  .side{max-height:60vh}
+  .actions .btn span{display:none}
+}
+</style>
 </head>
 <body>
-    <header class="header">
-        <div class="logo-container">
-            <div class="brand-badge">LIVE</div>
-            <h1 class="logo">MECHA<span>TV</span></h1>
-        </div>
-        <div class="header-actions">
-            <input type="text" id="searchInput" placeholder="Buscar canal..." class="search-input">
-            <button id="configBtn" class="btn-secondary">⚙️ Supabase</button>
-        </div>
-    </header>
+<header>
+  <div class="brand">MechaTV</div>
+  <div class="search"><input id="search" type="search" placeholder="Buscar canal…" autocomplete="off"></div>
+  <div class="actions">
+    <button class="btn" id="btnImport" title="Importar M3U">📥 <span>Importar M3U</span></button>
+    <button class="btn" id="btnExport" title="Descargar lista M3U">📤 <span>Exportar M3U</span></button>
+    <button class="btn" id="btnConfig" title="Ajustes">⚙️</button>
+  </div>
+</header>
 
-    <div class="category-bar" id="categoryContainer">
-        <button class="cat-chip active" data-category="ALL">Todos</button>
-        <button class="cat-chip" data-category="Deportes">Deportes</button>
-        <button class="cat-chip" data-category="Cine & Series">Cine & Series</button>
-        <button class="cat-chip" data-category="Noticias">Noticias</button>
-        <button class="cat-chip" data-category="Variedades">Variedades</button>
+<main>
+  <section class="player-col">
+    <div class="player" id="playerBox">
+      <video id="video" controls playsinline autoplay></video>
+      <div class="live hidden" id="live">● EN VIVO</div>
+      <div class="overlay" id="overlay"><div class="spinner"></div><div id="overlayMsg">Elige un canal para empezar</div></div>
     </div>
-
-    <main class="main-layout">
-        <section class="player-section">
-            <div class="video-wrapper">
-                <video id="videoPlayer" controls autoplay poster="https://images.unsplash.com/photo-1593784991095-a205069470b6?auto=format&fit=crop&w=1200&q=80"></video>
-                <div id="liveBadge" class="live-indicator hidden">
-                    <span class="dot"></span> EN VIVO
-                </div>
-            </div>
-            <div class="player-info">
-                <div class="info-meta">
-                    <h2 id="currentChannelTitle">Selecciona un canal</h2>
-                    <span id="currentChannelCategory" class="badge">---</span>
-                </div>
-                <p id="currentChannelStatus" class="status-text">Listo para reproducir</p>
-            </div>
-        </section>
-
-        <aside class="grid-section">
-            <div class="grid-header">
-                <h3>PARRILLA DE CANALES</h3>
-                <span id="channelCount" class="count-badge">0 canales</span>
-            </div>
-            <div class="channels-grid" id="channelsGrid"></div>
-        </aside>
-    </main>
-
-    <div id="configModal" class="modal hidden">
-        <div class="modal-content">
-            <h3>Conectar Supabase</h3>
-            <p>Ingresa tus credenciales para sincronizar tu tabla <code>tv_channels</code>.</p>
-            <div class="input-group">
-                <label>Supabase URL</label>
-                <input type="text" id="supabaseUrlInput" placeholder="https://xyz.supabase.co">
-            </div>
-            <div class="input-group">
-                <label>Supabase Anon Key</label>
-                <input type="text" id="supabaseKeyInput" placeholder="eyJhbGciOiJKV1Qi...">
-            </div>
-            <div class="modal-actions">
-                <button id="saveConfigBtn" class="btn-primary">Guardar y Conectar</button>
-                <button id="closeConfigBtn" class="btn-secondary">Cancelar</button>
-            </div>
-        </div>
+    <div class="info">
+      <img id="curLogo" alt="" src="">
+      <div>
+        <h2 id="curName">Ningún canal seleccionado</h2>
+        <p id="curMeta">—</p>
+      </div>
+      <div class="tools">
+        <button class="btn" id="btnPip" title="Imagen en imagen">PiP</button>
+        <button class="btn" id="btnFs" title="Pantalla completa (F)">⛶</button>
+        <button class="btn" id="btnRetry" title="Reintentar">↻</button>
+      </div>
     </div>
+  </section>
 
-    <script src="app.js"></script>
+  <aside class="side">
+    <div class="chips" id="chips"></div>
+    <div class="count" id="count">0 canales</div>
+    <div class="grid" id="grid"></div>
+  </aside>
+</main>
+
+<div class="modal hidden" id="modalConfig">
+  <div class="box">
+    <h3>Ajustes</h3>
+    <label>Supabase URL</label><input id="cfgUrl">
+    <label>Supabase publishable / anon key</label><input id="cfgKey">
+    <label>Tabla</label><input id="cfgTable">
+    <label>Proxy CORS (opcional)</label>
+    <input id="cfgProxy" placeholder="https://mi-proxy.workers.dev/?url={url}">
+    <div class="hint">Se usa solo como último recurso cuando un canal falla directo. Usa <code>{url}</code> donde va la URL del stream (codificada).</div>
+    <div class="row">
+      <button class="btn" id="cfgCancel">Cancelar</button>
+      <button class="btn primary" id="cfgSave">Guardar y recargar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="modalImport">
+  <div class="box">
+    <h3>Importar lista M3U</h3>
+    <label>URL de una lista .m3u / .m3u8</label><input id="impUrl" placeholder="https://…/lista.m3u">
+    <label>…o pega el contenido</label><textarea id="impText" placeholder="#EXTM3U&#10;#EXTINF:-1 tvg-logo=&quot;…&quot; group-title=&quot;Noticias&quot;,Mi Canal&#10;https://…/stream.m3u8"></textarea>
+    <div class="hint">Los canales importados se agregan solo en esta sesión del navegador (no se suben a Supabase).</div>
+    <div class="row">
+      <button class="btn" id="impCancel">Cancelar</button>
+      <button class="btn primary" id="impGo">Importar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============ Configuración ============ */
+const DEFAULTS = {
+  url:   "https://mbdsegfnlkhnvymannpy.supabase.co",
+  key:   "sb_publishable_3R0SBt0i9zPYrbZMl18tQA_V9Wf20IR",
+  table: "tv_channels",
+  proxy: ""
+};
+const cfg = {
+  get(k){ return localStorage.getItem('mechatv_'+k) ?? DEFAULTS[k]; },
+  set(k,v){ localStorage.setItem('mechatv_'+k, v); }
+};
+const FALLBACK_LOGO = "data:image/svg+xml;utf8," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="6" y="14" width="52" height="34" rx="6" fill="none" stroke="#8089a5" stroke-width="3"/><path d="M22 54h20M32 48v6" stroke="#8089a5" stroke-width="3"/></svg>');
+
+/* ============ Estado ============ */
+let channels = [];
+let activeCat = 'ALL';
+let current = null;
+let hls = null;
+let playToken = 0;
+const offline = new Set();
+let favs = new Set(JSON.parse(localStorage.getItem('mechatv_favs') || '[]'));
+
+const $ = id => document.getElementById(id);
+const video = $('video');
+
+/* ============ Utilidades ============ */
+const keyOf = ch => String(ch.id ?? ch.url);
+const norm = s => (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+function setOverlay(msg, mode){ // mode: 'load' | 'error' | 'hide'
+  const o = $('overlay');
+  if(mode === 'hide'){ o.classList.add('hidden'); return; }
+  o.classList.remove('hidden');
+  o.classList.toggle('error', mode === 'error');
+  $('overlayMsg').textContent = msg;
+}
+
+/* ============ Carga desde Supabase (REST, sin librerías) ============ */
+async function loadChannels(){
+  setOverlay('Cargando canales…','load');
+  try{
+    const base = cfg.get('url').replace(/\/+$/,'');
+    const key = cfg.get('key');
+    const headers = { apikey: key, Accept: 'application/json' };
+    if(key.startsWith('eyJ')) headers.Authorization = 'Bearer ' + key; // solo claves JWT antiguas (anon)
+    let res;
+    try{
+      res = await fetch(`${base}/rest/v1/${encodeURIComponent(cfg.get('table'))}?select=*`, { headers });
+    }catch(netErr){
+      throw new Error('NETWORK');
+    }
+    if(!res.ok){
+      const t = await res.text();
+      throw new Error(`HTTP ${res.status}: ${t.slice(0,200)}`);
+    }
+    const data = await res.json();
+    channels = data.filter(c => c && c.url).map(c => ({
+      id: c.id, name: c.name || 'Sin nombre', url: String(c.url).trim(),
+      logo: c.logo || '', category: c.category || 'Otros'
+    }));
+    if(channels.length) localStorage.setItem('mechatv_cache', JSON.stringify(channels));
+    if(!channels.length){
+      setOverlay('La tabla devolvió 0 canales. Si tienes datos, revisa que RLS tenga una política SELECT para la clave anónima.','error');
+    } else {
+      setOverlay('Elige un canal para empezar','load');
+      document.querySelector('#overlay .spinner').style.display='none';
+    }
+  }catch(err){
+    console.error(err);
+    let msg;
+    if(err.message === 'NETWORK'){
+      msg = 'No se pudo conectar con Supabase (Failed to fetch). Causas probables: 1) el proyecto de Supabase está pausado (entra a supabase.com/dashboard y pulsa Restore); 2) la URL de Ajustes está mal; 3) un bloqueador de anuncios/VPN/DNS bloquea supabase.co; 4) abriste la página dentro de una vista previa que bloquea conexiones: ábrela desde tu hosting o el archivo guardado en tu PC.';
+    } else if(/HTTP 401|HTTP 403/.test(err.message)){
+      msg = 'Supabase rechazó la clave o falta una política RLS SELECT en la tabla. ' + err.message;
+    } else if(/HTTP 404/.test(err.message)){
+      msg = 'La tabla no existe o el nombre está mal (Ajustes → Tabla). ' + err.message;
+    } else msg = 'Error de Supabase: ' + err.message;
+    try{ channels = JSON.parse(localStorage.getItem('mechatv_cache') || '[]'); }catch{ channels = []; }
+    if(channels.length) msg = '⚠ Sin conexión, mostrando la última lista guardada. ' + msg;
+    setOverlay(msg, 'error');
+  }
+  renderChips(); render();
+  const last = localStorage.getItem('mechatv_last');
+  const ch = channels.find(c => keyOf(c) === last);
+  if(ch) selectChannel(ch, false);
+}
+
+/* ============ M3U ============ */
+function parseM3U(text){
+  const out = []; let meta = null;
+  for(const raw of text.split(/\r?\n/)){
+    const line = raw.trim();
+    if(!line) continue;
+    if(line.startsWith('#EXTINF')){
+      const name = line.includes(',') ? line.slice(line.lastIndexOf(',')+1).trim() : '';
+      const attr = n => (line.match(new RegExp(n + '="([^"]*)"','i')) || [])[1] || '';
+      meta = { name: name || attr('tvg-name') || 'Sin nombre', logo: attr('tvg-logo'), category: attr('group-title') || 'Otros' };
+    } else if(!line.startsWith('#')){
+      out.push({ id:'m3u_'+out.length+'_'+Date.now(), url: line, ...(meta || {name:'Canal '+(out.length+1), logo:'', category:'Otros'}) });
+      meta = null;
+    }
+  }
+  return out;
+}
+function exportM3U(){
+  if(!channels.length){ alert('No hay canales para exportar.'); return; }
+  let s = '#EXTM3U\n';
+  for(const c of channels){
+    s += `#EXTINF:-1 tvg-id="${c.id ?? ''}" tvg-logo="${c.logo || ''}" group-title="${c.category}",${c.name}\n${c.url}\n`;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([s],{type:'audio/x-mpegurl'}));
+  a.download = 'mechatv.m3u';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+}
+
+/* ============ Render ============ */
+function categories(){
+  return ['ALL','★ Favoritos', ...[...new Set(channels.map(c => c.category))].sort()];
+}
+function renderChips(){
+  const box = $('chips'); box.innerHTML = '';
+  categories().forEach(cat=>{
+    const b = document.createElement('button');
+    b.className = 'chip' + (cat === activeCat ? ' active' : '');
+    b.textContent = cat === 'ALL' ? 'Todos' : cat;
+    b.onclick = () => { activeCat = cat; renderChips(); render(); };
+    box.appendChild(b);
+  });
+}
+function visibleChannels(){
+  const q = norm($('search').value.trim());
+  return channels.filter(c =>
+    (activeCat === 'ALL' || (activeCat === '★ Favoritos' ? favs.has(keyOf(c)) : c.category === activeCat)) &&
+    norm(c.name).includes(q));
+}
+function render(){
+  const list = visibleChannels();
+  const grid = $('grid'); grid.innerHTML = '';
+  $('count').textContent = `${list.length} canales`;
+  if(!list.length){
+    const d = document.createElement('div'); d.className = 'empty';
+    d.textContent = channels.length ? 'No hay canales con ese filtro.' : 'Sin canales. Revisa Ajustes o importa una lista M3U.';
+    grid.appendChild(d); return;
+  }
+  for(const ch of list){
+    const k = keyOf(ch);
+    const card = document.createElement('div');
+    card.className = 'card' + (current && keyOf(current) === k ? ' active' : '') + (offline.has(k) ? ' offline' : '');
+    card.title = ch.name;
+    const img = document.createElement('img');
+    img.loading = 'lazy'; img.alt = ''; img.src = ch.logo || FALLBACK_LOGO;
+    img.onerror = () => { img.onerror = null; img.src = FALLBACK_LOGO; };
+    const n = document.createElement('span'); n.className = 'n'; n.textContent = ch.name;
+    const f = document.createElement('button');
+    f.className = 'fav' + (favs.has(k) ? ' on' : ''); f.textContent = '★';
+    f.onclick = e => { e.stopPropagation(); toggleFav(k); };
+    card.append(f, img, n);
+    card.onclick = () => selectChannel(ch, true);
+    grid.appendChild(card);
+  }
+}
+function toggleFav(k){
+  favs.has(k) ? favs.delete(k) : favs.add(k);
+  localStorage.setItem('mechatv_favs', JSON.stringify([...favs]));
+  render();
+}
+
+/* ============ Reproducción ============ */
+function buildCandidates(url){
+  const list = [];
+  const pageHttps = location.protocol === 'https:';
+  const isHttp = url.startsWith('http://');
+  if(!(pageHttps && isHttp)) list.push(url);               // directo (si no hay contenido mixto)
+  if(isHttp) list.push('https://' + url.slice(7));          // intento con https
+  const p = cfg.get('proxy');
+  if(p && p.includes('{url}')) list.push(p.replace('{url}', encodeURIComponent(url)));
+  return [...new Set(list)];
+}
+function stopPlayer(){
+  if(hls){ hls.destroy(); hls = null; }
+  video.removeAttribute('src'); video.load();
+}
+function selectChannel(ch, autoplay){
+  current = ch;
+  localStorage.setItem('mechatv_last', keyOf(ch));
+  $('curName').textContent = ch.name;
+  $('curMeta').textContent = ch.category;
+  $('curLogo').src = ch.logo || FALLBACK_LOGO;
+  $('curLogo').onerror = e => { e.target.onerror = null; e.target.src = FALLBACK_LOGO; };
+  render();
+  if(autoplay) play(ch);
+  else setOverlay('Pulsa un canal o el botón ↻ para reproducir','load');
+}
+function play(ch){
+  const token = ++playToken;
+  const cands = buildCandidates(ch.url);
+  $('live').classList.add('hidden');
+  stopPlayer();
+  document.querySelector('#overlay .spinner').style.display='';
+  if(!cands.length){
+    return fail(ch, 'La página está en HTTPS y el stream es HTTP (bloqueado por el navegador). Configura un proxy en Ajustes o sirve esta web por HTTP.');
+  }
+  tryCandidate(ch, cands, 0, token);
+}
+function tryCandidate(ch, cands, i, token){
+  if(token !== playToken) return;
+  if(i >= cands.length) return fail(ch, 'No se pudo reproducir. Puede ser CORS, stream caído o formato no compatible.');
+  setOverlay(`Conectando${cands.length>1 ? ` (${i+1}/${cands.length})` : ''}…`, 'load');
+  const url = cands[i];
+  const next = () => tryCandidate(ch, cands, i+1, token);
+  const ok = () => {
+    if(token !== playToken) return;
+    offline.delete(keyOf(ch));
+    setOverlay('', 'hide');
+    $('live').classList.remove('hidden');
+    render();
+  };
+
+  // Archivos directos (mp4/webm)
+  if(/\.(mp4|webm|ogv)(\?|$)/i.test(url)){
+    video.src = url;
+    video.onplaying = ok;
+    video.onerror = next;
+    video.play().catch(()=>{});
+    return;
+  }
+
+  if(window.Hls && Hls.isSupported()){
+    hls = new Hls({ enableWorker:true, lowLatencyMode:true, manifestLoadingTimeOut:12000, manifestLoadingMaxRetry:1, levelLoadingMaxRetry:2, fragLoadingMaxRetry:3 });
+    let recovered = 0, started = false;
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
+    hls.on(Hls.Events.FRAG_BUFFERED, () => { if(!started){ started = true; ok(); } });
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if(token !== playToken) return;
+      if(!d.fatal) return;
+      console.warn('HLS fatal', d.type, d.details, url);
+      if(started && d.type === Hls.ErrorTypes.NETWORK_ERROR && recovered < 3){ recovered++; hls.startLoad(); return; }
+      if(started && d.type === Hls.ErrorTypes.MEDIA_ERROR && recovered < 3){ recovered++; hls.recoverMediaError(); return; }
+      if(hls){ hls.destroy(); hls = null; }
+      next();
+    });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+  } else if(video.canPlayType('application/vnd.apple.mpegurl')){ // Safari / iOS
+    video.src = url;
+    video.onplaying = ok;
+    video.onerror = next;
+    video.play().catch(()=>{});
+  } else {
+    fail(ch, 'Tu navegador no soporta HLS.');
+  }
+}
+function fail(ch, msg){
+  offline.add(keyOf(ch));
+  setOverlay(`${ch.name}: ${msg}`, 'error');
+  $('live').classList.add('hidden');
+  render();
+}
+
+/* ============ Eventos ============ */
+$('search').addEventListener('input', render);
+$('btnExport').onclick = exportM3U;
+$('btnRetry').onclick = () => current && play(current);
+$('btnFs').onclick = () => {
+  const el = $('playerBox');
+  document.fullscreenElement ? document.exitFullscreen() : (el.requestFullscreen?.() || video.webkitEnterFullscreen?.());
+};
+$('btnPip').onclick = async () => {
+  try{ document.pictureInPictureElement ? await document.exitPictureInPicture() : await video.requestPictureInPicture(); }
+  catch{ alert('Imagen en imagen no disponible en este navegador.'); }
+};
+// Ajustes
+$('btnConfig').onclick = () => {
+  $('cfgUrl').value = cfg.get('url'); $('cfgKey').value = cfg.get('key');
+  $('cfgTable').value = cfg.get('table'); $('cfgProxy').value = cfg.get('proxy');
+  $('modalConfig').classList.remove('hidden');
+};
+$('cfgCancel').onclick = () => $('modalConfig').classList.add('hidden');
+$('cfgSave').onclick = () => {
+  cfg.set('url', $('cfgUrl').value.trim()); cfg.set('key', $('cfgKey').value.trim());
+  cfg.set('table', $('cfgTable').value.trim() || 'tv_channels'); cfg.set('proxy', $('cfgProxy').value.trim());
+  location.reload();
+};
+// Importar M3U
+$('btnImport').onclick = () => $('modalImport').classList.remove('hidden');
+$('impCancel').onclick = () => $('modalImport').classList.add('hidden');
+$('impGo').onclick = async () => {
+  let text = $('impText').value.trim();
+  const u = $('impUrl').value.trim();
+  try{
+    if(!text && u){ const r = await fetch(u); if(!r.ok) throw new Error('HTTP '+r.status); text = await r.text(); }
+    const added = parseM3U(text);
+    if(!added.length) return alert('No se encontraron canales en esa lista.');
+    channels = channels.concat(added);
+    renderChips(); render();
+    $('modalImport').classList.add('hidden');
+    $('impText').value = ''; $('impUrl').value = '';
+  }catch(e){
+    alert('No se pudo cargar la lista (¿CORS?). Pega el contenido directamente.\n' + e.message);
+  }
+};
+// Atajos: ↑/↓ cambia canal, F pantalla completa, M silencio
+document.addEventListener('keydown', e => {
+  if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  const list = visibleChannels();
+  const idx = current ? list.findIndex(c => keyOf(c) === keyOf(current)) : -1;
+  if(e.key === 'ArrowDown' && list.length){ e.preventDefault(); selectChannel(list[(idx+1) % list.length], true); }
+  if(e.key === 'ArrowUp' && list.length){ e.preventDefault(); selectChannel(list[(idx-1+list.length) % list.length], true); }
+  if(e.key.toLowerCase() === 'f') $('btnFs').click();
+  if(e.key.toLowerCase() === 'm') video.muted = !video.muted;
+});
+
+loadChannels();
+</script>
 </body>
 </html>
