@@ -1,18 +1,15 @@
-// Credentials por defecto de MECHA TV
 const DEFAULT_SUPABASE_URL = "https://mbdsegfnlkhnvymannpy.supabase.co";
 const DEFAULT_SUPABASE_KEY = "sb_publishable_3R0SBt0i9zPYrbZMl18tQA_V9Wf20IR";
 
 let channels = [];
 let activeCategory = 'ALL';
 let currentChannel = null;
-let supabaseClient = null; // Renombrado para evitar conflicto con la librería global
+let supabaseClient = null;
 let hls = null;
 
-// Elementos del DOM
 let videoPlayer, channelsGrid, searchInput, currentTitle, currentCategory, currentStatus, liveBadge, channelCount;
 
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Capturar elementos del DOM
     videoPlayer = document.getElementById('videoPlayer');
     channelsGrid = document.getElementById('channelsGrid');
     searchInput = document.getElementById('searchInput');
@@ -22,7 +19,6 @@ document.addEventListener('DOMContentLoaded', () => {
     liveBadge = document.getElementById('liveBadge');
     channelCount = document.getElementById('channelCount');
 
-    // 2. Pre-cargar credenciales si no existen en localStorage
     if (!localStorage.getItem('mechatv_sb_url')) {
         localStorage.setItem('mechatv_sb_url', DEFAULT_SUPABASE_URL);
     }
@@ -30,7 +26,6 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('mechatv_sb_key', DEFAULT_SUPABASE_KEY);
     }
 
-    // 3. Iniciar eventos y conexión
     setupEvents();
     initSupabase();
 });
@@ -44,19 +39,18 @@ function initSupabase() {
     if (urlInput) urlInput.value = url || '';
     if (keyInput) keyInput.value = key || '';
 
-    // Usamos el constructor window.supabase para crear la instancia en supabaseClient
     if (url && key && window.supabase && typeof window.supabase.createClient === 'function') {
         supabaseClient = window.supabase.createClient(url, key);
         fetchFromSupabase();
     } else {
-        if (currentStatus) currentStatus.textContent = 'Configura las credenciales de Supabase en ⚙️';
+        if (currentStatus) currentStatus.textContent = 'Configura las credenciales en ⚙️';
     }
 }
 
 async function fetchFromSupabase() {
     if (!supabaseClient) return;
     try {
-        if (currentStatus) currentStatus.textContent = 'Cargando canales desde Supabase...';
+        if (currentStatus) currentStatus.textContent = 'Cargando canales...';
         
         const { data, error } = await supabaseClient.from('tv_channels').select('*');
         if (error) throw error;
@@ -64,15 +58,15 @@ async function fetchFromSupabase() {
         if (data && data.length > 0) {
             channels = data.map(ch => ({ ...ch, fail_count: ch.fail_count || 0 }));
             filterAndRender();
-            if (currentStatus) currentStatus.textContent = `¡Sincronización exitosa! ${channels.length} canales cargados.`;
+            if (currentStatus) currentStatus.textContent = `¡Listo! ${channels.length} canales cargados.`;
         } else {
             channels = [];
             filterAndRender();
-            if (currentStatus) currentStatus.textContent = 'La tabla de Supabase está vacía.';
+            if (currentStatus) currentStatus.textContent = 'Sin canales en Supabase.';
         }
     } catch (err) {
         console.error('Error Supabase:', err);
-        if (currentStatus) currentStatus.textContent = 'Error al conectar con Supabase. Revisa RLS en la tabla.';
+        if (currentStatus) currentStatus.textContent = 'Error de conexión a Supabase.';
     }
 }
 
@@ -94,7 +88,7 @@ function renderChannels(channelList) {
     if (channelCount) channelCount.textContent = `${channelList.length} canales`;
 
     if (channelList.length === 0) {
-        channelsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #7f8c8d; padding: 20px;">No se encontraron canales.</div>';
+        channelsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #7f8c8d; padding: 20px;">No hay canales disponibles.</div>';
         return;
     }
 
@@ -114,20 +108,32 @@ function playChannel(channel) {
     currentChannel = channel;
     if (currentTitle) currentTitle.textContent = channel.name;
     if (currentCategory) currentCategory.textContent = channel.category;
-    if (currentStatus) currentStatus.textContent = 'Conectando al stream...';
+    if (currentStatus) currentStatus.textContent = 'Conectando al señal...';
     
     filterAndRender();
 
     if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         if (hls) hls.destroy();
-        hls = new Hls({ maxBufferLength: 10 });
+
+        // AJUSTES DE OPTIMIZACIÓN Y BAJA LATENCIA
+        hls = new Hls({
+            maxBufferLength: 6,
+            maxMaxBufferLength: 12,
+            enableWorker: true,
+            lowLatencyMode: true,
+            manifestLoadingTimeOut: 4000,
+            manifestLoadingMaxRetry: 1,
+            fragLoadingTimeOut: 4000,
+            fragLoadingMaxRetry: 1
+        });
+
         hls.loadSource(channel.url);
         hls.attachMedia(videoPlayer);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (videoPlayer) videoPlayer.play().catch(() => {});
             if (liveBadge) liveBadge.classList.remove('hidden');
-            if (currentStatus) currentStatus.textContent = 'Transmitiendo en vivo';
+            if (currentStatus) currentStatus.textContent = 'En vivo';
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
@@ -137,18 +143,18 @@ function playChannel(channel) {
         videoPlayer.src = channel.url;
         videoPlayer.play().catch(() => {});
         if (liveBadge) liveBadge.classList.remove('hidden');
-        if (currentStatus) currentStatus.textContent = 'Transmitiendo en vivo';
+        if (currentStatus) currentStatus.textContent = 'En vivo';
     }
 }
 
 function handleStreamError(channel) {
     channel.fail_count = (channel.fail_count || 0) + 1;
-    if (currentStatus) currentStatus.textContent = `⚠️ Error de señal (Intento ${channel.fail_count}/2)`;
+    if (currentStatus) currentStatus.textContent = `⚠️ Señal inestable (${channel.fail_count}/2)`;
 
     if (channel.fail_count >= 2) {
         channels = channels.filter(c => c.id !== channel.id);
         filterAndRender();
-        if (currentStatus) currentStatus.textContent = `🗑️ Canal "${channel.name}" removido por fallos repetidos.`;
+        if (currentStatus) currentStatus.textContent = `🗑️ Canal "${channel.name}" desestimado por falta de señal.`;
         if (liveBadge) liveBadge.classList.add('hidden');
     }
 }
