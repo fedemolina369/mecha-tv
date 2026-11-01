@@ -1,18 +1,18 @@
-// Credentials de MECHA TV
+// Credentials por defecto de MECHA TV
 const DEFAULT_SUPABASE_URL = "https://mbdsegfnlkhnvymannpy.supabase.co";
 const DEFAULT_SUPABASE_KEY = "sb_publishable_3R0SBt0i9zPYrbZMl18tQA_V9Wf20IR";
 
 let channels = [];
 let activeCategory = 'ALL';
 let currentChannel = null;
-let supabase = null;
+let supabaseClient = null; // Renombrado para evitar conflicto con la librería global
 let hls = null;
 
-// Elementos del DOM (se inicializan de forma segura al cargar la página)
+// Elementos del DOM
 let videoPlayer, channelsGrid, searchInput, currentTitle, currentCategory, currentStatus, liveBadge, channelCount;
 
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Vincular elementos del DOM tras la carga completa del HTML
+    // 1. Capturar elementos del DOM
     videoPlayer = document.getElementById('videoPlayer');
     channelsGrid = document.getElementById('channelsGrid');
     searchInput = document.getElementById('searchInput');
@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     liveBadge = document.getElementById('liveBadge');
     channelCount = document.getElementById('channelCount');
 
-    // 2. Pre-cargar credenciales por defecto si no existen en localStorage
+    // 2. Pre-cargar credenciales si no existen en localStorage
     if (!localStorage.getItem('mechatv_sb_url')) {
         localStorage.setItem('mechatv_sb_url', DEFAULT_SUPABASE_URL);
     }
@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('mechatv_sb_key', DEFAULT_SUPABASE_KEY);
     }
 
-    // 3. Inicializar la app y eventos
+    // 3. Iniciar eventos y conexión
     setupEvents();
     initSupabase();
 });
@@ -39,14 +39,14 @@ function initSupabase() {
     const url = localStorage.getItem('mechatv_sb_url');
     const key = localStorage.getItem('mechatv_sb_key');
 
-    // Llenar inputs del modal de configuración con los valores guardados
     const urlInput = document.getElementById('supabaseUrlInput');
     const keyInput = document.getElementById('supabaseKeyInput');
     if (urlInput) urlInput.value = url || '';
     if (keyInput) keyInput.value = key || '';
 
-    if (url && key && window.supabase) {
-        supabase = window.supabase.createClient(url, key);
+    // Usamos el constructor window.supabase para crear la instancia en supabaseClient
+    if (url && key && window.supabase && typeof window.supabase.createClient === 'function') {
+        supabaseClient = window.supabase.createClient(url, key);
         fetchFromSupabase();
     } else {
         if (currentStatus) currentStatus.textContent = 'Configura las credenciales de Supabase en ⚙️';
@@ -54,21 +54,21 @@ function initSupabase() {
 }
 
 async function fetchFromSupabase() {
-    if (!supabase) return;
+    if (!supabaseClient) return;
     try {
-        if (currentStatus) currentStatus.textContent = 'Cargando canales reales desde Supabase...';
+        if (currentStatus) currentStatus.textContent = 'Cargando canales desde Supabase...';
         
-        const { data, error } = await supabase.from('tv_channels').select('*');
+        const { data, error } = await supabaseClient.from('tv_channels').select('*');
         if (error) throw error;
 
         if (data && data.length > 0) {
             channels = data.map(ch => ({ ...ch, fail_count: ch.fail_count || 0 }));
             filterAndRender();
-            if (currentStatus) currentStatus.textContent = `Sincronización exitosa: ${channels.length} canales disponibles.`;
+            if (currentStatus) currentStatus.textContent = `¡Sincronización exitosa! ${channels.length} canales cargados.`;
         } else {
             channels = [];
             filterAndRender();
-            if (currentStatus) currentStatus.textContent = 'La tabla de Supabase está vacía. Ejecuta el script de Python.';
+            if (currentStatus) currentStatus.textContent = 'La tabla de Supabase está vacía.';
         }
     } catch (err) {
         console.error('Error Supabase:', err);
@@ -155,9 +155,7 @@ function handleStreamError(channel) {
 
 function setupEvents() {
     if (searchInput) {
-        searchInput.addEventListener('input', () => {
-            filterAndRender();
-        });
+        searchInput.addEventListener('input', filterAndRender);
     }
 
     const catContainer = document.getElementById('categoryContainer');
