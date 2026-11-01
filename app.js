@@ -1,70 +1,108 @@
-const DEFAULT_CHANNELS = [
-    {
-        id: '1',
-        name: 'ESPN Demo',
-        category: 'Deportes',
-        logo: 'https://upload.wikimedia.org/wikipedia/commons/2/2f/ESPN_wordmark.svg',
-        url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-        fail_count: 0
-    }
-];
+// Credentials de MECHA TV
+const DEFAULT_SUPABASE_URL = "https://mbdsegfnlkhnvymannpy.supabase.co";
+const DEFAULT_SUPABASE_KEY = "sb_publishable_3R0SBt0i9zPYrbZMl18tQA_V9Wf20IR";
 
-let channels = [...DEFAULT_CHANNELS];
+let channels = [];
+let activeCategory = 'ALL';
 let currentChannel = null;
 let supabase = null;
 let hls = null;
 
-const videoPlayer = document.getElementById('videoPlayer');
-const channelsGrid = document.getElementById('channelsGrid');
-const searchInput = document.getElementById('searchInput');
-const currentTitle = document.getElementById('currentChannelTitle');
-const currentCategory = document.getElementById('currentChannelCategory');
-const currentStatus = document.getElementById('currentChannelStatus');
-const liveBadge = document.getElementById('liveBadge');
-const channelCount = document.getElementById('channelCount');
+// Elementos del DOM (se inicializan de forma segura al cargar la página)
+let videoPlayer, channelsGrid, searchInput, currentTitle, currentCategory, currentStatus, liveBadge, channelCount;
 
 document.addEventListener('DOMContentLoaded', () => {
-    initSupabase();
-    renderChannels(channels);
+    // 1. Vincular elementos del DOM tras la carga completa del HTML
+    videoPlayer = document.getElementById('videoPlayer');
+    channelsGrid = document.getElementById('channelsGrid');
+    searchInput = document.getElementById('searchInput');
+    currentTitle = document.getElementById('currentChannelTitle');
+    currentCategory = document.getElementById('currentChannelCategory');
+    currentStatus = document.getElementById('currentChannelStatus');
+    liveBadge = document.getElementById('liveBadge');
+    channelCount = document.getElementById('channelCount');
+
+    // 2. Pre-cargar credenciales por defecto si no existen en localStorage
+    if (!localStorage.getItem('mechatv_sb_url')) {
+        localStorage.setItem('mechatv_sb_url', DEFAULT_SUPABASE_URL);
+    }
+    if (!localStorage.getItem('mechatv_sb_key')) {
+        localStorage.setItem('mechatv_sb_key', DEFAULT_SUPABASE_KEY);
+    }
+
+    // 3. Inicializar la app y eventos
     setupEvents();
+    initSupabase();
 });
 
 function initSupabase() {
     const url = localStorage.getItem('mechatv_sb_url');
     const key = localStorage.getItem('mechatv_sb_key');
 
+    // Llenar inputs del modal de configuración con los valores guardados
+    const urlInput = document.getElementById('supabaseUrlInput');
+    const keyInput = document.getElementById('supabaseKeyInput');
+    if (urlInput) urlInput.value = url || '';
+    if (keyInput) keyInput.value = key || '';
+
     if (url && key && window.supabase) {
         supabase = window.supabase.createClient(url, key);
         fetchFromSupabase();
+    } else {
+        if (currentStatus) currentStatus.textContent = 'Configura las credenciales de Supabase en ⚙️';
     }
 }
 
 async function fetchFromSupabase() {
     if (!supabase) return;
     try {
-        currentStatus.textContent = 'Cargando canales desde Supabase...';
+        if (currentStatus) currentStatus.textContent = 'Cargando canales reales desde Supabase...';
+        
         const { data, error } = await supabase.from('tv_channels').select('*');
         if (error) throw error;
+
         if (data && data.length > 0) {
             channels = data.map(ch => ({ ...ch, fail_count: ch.fail_count || 0 }));
-            renderChannels(channels);
-            currentStatus.textContent = 'Canales sincronizados correctamente.';
+            filterAndRender();
+            if (currentStatus) currentStatus.textContent = `Sincronización exitosa: ${channels.length} canales disponibles.`;
+        } else {
+            channels = [];
+            filterAndRender();
+            if (currentStatus) currentStatus.textContent = 'La tabla de Supabase está vacía. Ejecuta el script de Python.';
         }
     } catch (err) {
         console.error('Error Supabase:', err);
-        currentStatus.textContent = 'Error al cargar Supabase. Usando demo.';
+        if (currentStatus) currentStatus.textContent = 'Error al conectar con Supabase. Revisa RLS en la tabla.';
     }
 }
 
+function filterAndRender() {
+    const query = searchInput ? searchInput.value.toLowerCase().trim() : '';
+    
+    const filtered = channels.filter(ch => {
+        const matchesCategory = (activeCategory === 'ALL' || ch.category === activeCategory);
+        const matchesSearch = ch.name.toLowerCase().includes(query);
+        return matchesCategory && matchesSearch;
+    });
+
+    renderChannels(filtered);
+}
+
 function renderChannels(channelList) {
+    if (!channelsGrid) return;
     channelsGrid.innerHTML = '';
-    channelCount.textContent = `${channelList.length} canales`;
+    if (channelCount) channelCount.textContent = `${channelList.length} canales`;
+
+    if (channelList.length === 0) {
+        channelsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #7f8c8d; padding: 20px;">No se encontraron canales.</div>';
+        return;
+    }
 
     channelList.forEach(ch => {
         const card = document.createElement('div');
         card.className = `channel-card ${currentChannel?.id === ch.id ? 'active' : ''}`;
         card.innerHTML = `
-            <img class="channel-logo" src="${ch.logo}" alt="${ch.name}" onerror="this.src='https://via.placeholder.com/45?text=TV'">
+            <img class="channel-logo" src="${ch.logo}" alt="${ch.name}" onerror="this.src='https://cdn-icons-png.flaticon.com/512/716/716422.png'">
             <span class="channel-name">${ch.name}</span>
         `;
         card.onclick = () => playChannel(ch);
@@ -74,75 +112,88 @@ function renderChannels(channelList) {
 
 function playChannel(channel) {
     currentChannel = channel;
-    currentTitle.textContent = channel.name;
-    currentCategory.textContent = channel.category;
-    currentStatus.textContent = 'Conectando al stream...';
+    if (currentTitle) currentTitle.textContent = channel.name;
+    if (currentCategory) currentCategory.textContent = channel.category;
+    if (currentStatus) currentStatus.textContent = 'Conectando al stream...';
     
-    document.querySelectorAll('.channel-card').forEach(card => card.classList.remove('active'));
-    renderChannels(channels);
+    filterAndRender();
 
-    if (Hls.isSupported()) {
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         if (hls) hls.destroy();
         hls = new Hls({ maxBufferLength: 10 });
         hls.loadSource(channel.url);
         hls.attachMedia(videoPlayer);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            videoPlayer.play();
-            liveBadge.classList.remove('hidden');
-            currentStatus.textContent = 'Transmitiendo en vivo';
+            if (videoPlayer) videoPlayer.play().catch(() => {});
+            if (liveBadge) liveBadge.classList.remove('hidden');
+            if (currentStatus) currentStatus.textContent = 'Transmitiendo en vivo';
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) handleStreamError(channel);
         });
-    } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+    } else if (videoPlayer && videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
         videoPlayer.src = channel.url;
-        videoPlayer.play();
+        videoPlayer.play().catch(() => {});
+        if (liveBadge) liveBadge.classList.remove('hidden');
+        if (currentStatus) currentStatus.textContent = 'Transmitiendo en vivo';
     }
 }
 
 function handleStreamError(channel) {
     channel.fail_count = (channel.fail_count || 0) + 1;
-    currentStatus.textContent = `⚠️ Error de señal (Intento ${channel.fail_count}/2)`;
+    if (currentStatus) currentStatus.textContent = `⚠️ Error de señal (Intento ${channel.fail_count}/2)`;
 
     if (channel.fail_count >= 2) {
         channels = channels.filter(c => c.id !== channel.id);
-        renderChannels(channels);
-        currentStatus.textContent = `🗑️ Canal "${channel.name}" removido por fallos repetidos.`;
-        liveBadge.classList.add('hidden');
+        filterAndRender();
+        if (currentStatus) currentStatus.textContent = `🗑️ Canal "${channel.name}" removido por fallos repetidos.`;
+        if (liveBadge) liveBadge.classList.add('hidden');
     }
 }
 
 function setupEvents() {
-    searchInput.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase();
-        const filtered = channels.filter(c => c.name.toLowerCase().includes(query));
-        renderChannels(filtered);
-    });
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            filterAndRender();
+        });
+    }
 
-    document.getElementById('categoryContainer').addEventListener('click', (e) => {
-        if (!e.target.classList.contains('cat-chip')) return;
-        document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
-        e.target.classList.add('active');
+    const catContainer = document.getElementById('categoryContainer');
+    if (catContainer) {
+        catContainer.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('cat-chip')) return;
+            document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
+            e.target.classList.add('active');
 
-        const cat = e.target.dataset.category;
-        const filtered = cat === 'ALL' ? channels : channels.filter(c => c.category === cat);
-        renderChannels(filtered);
-    });
+            activeCategory = e.target.dataset.category;
+            filterAndRender();
+        });
+    }
 
     const modal = document.getElementById('configModal');
-    document.getElementById('configBtn').onclick = () => modal.classList.remove('hidden');
-    document.getElementById('closeConfigBtn').onclick = () => modal.classList.add('hidden');
+    const configBtn = document.getElementById('configBtn');
+    const closeConfigBtn = document.getElementById('closeConfigBtn');
+    const saveConfigBtn = document.getElementById('saveConfigBtn');
+
+    if (configBtn && modal) {
+        configBtn.onclick = () => modal.classList.remove('hidden');
+    }
+    if (closeConfigBtn && modal) {
+        closeConfigBtn.onclick = () => modal.classList.add('hidden');
+    }
     
-    document.getElementById('saveConfigBtn').onclick = () => {
-        const url = document.getElementById('supabaseUrlInput').value.trim();
-        const key = document.getElementById('supabaseKeyInput').value.trim();
-        if (url && key) {
-            localStorage.setItem('mechatv_sb_url', url);
-            localStorage.setItem('mechatv_sb_key', key);
-            modal.classList.add('hidden');
-            initSupabase();
-        }
-    };
+    if (saveConfigBtn && modal) {
+        saveConfigBtn.onclick = () => {
+            const url = document.getElementById('supabaseUrlInput').value.trim();
+            const key = document.getElementById('supabaseKeyInput').value.trim();
+            if (url && key) {
+                localStorage.setItem('mechatv_sb_url', url);
+                localStorage.setItem('mechatv_sb_key', key);
+                modal.classList.add('hidden');
+                initSupabase();
+            }
+        };
+    }
 }
